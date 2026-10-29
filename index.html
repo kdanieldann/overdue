@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Overdue</title>
+<style>
+  :root { --bg: #f4f4f2; --card: #fff; --ink: #1b1b1a; --muted: #7a7974; --line: #e4e3df; --accent: #3b5bdb; --late: #b42318; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif; }
+  main { max-width: 620px; margin: 0 auto; padding: 32px 16px 64px; }
+  header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 20px; }
+  h1 { font-size: 26px; margin: 0; letter-spacing: -0.01em; }
+  .count { color: var(--muted); font-size: 12px; }
+  .tabs { display: flex; gap: 4px; margin-bottom: 12px; }
+  .tabs button { font: inherit; font-size: 12px; border: 1px solid transparent; background: none; color: var(--muted); padding: 5px 12px; border-radius: 99px; cursor: pointer; }
+  .tabs button.on { background: var(--card); border-color: var(--line); color: var(--ink); }
+  form { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  input[name=title] { flex-basis: 220px; }
+  input { font: inherit; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: inherit; min-width: 0; }
+  input[name=title] { flex: 1; }
+  form button { font: inherit; padding: 10px 16px; border-radius: 8px; border: none; background: var(--accent); color: #fff; cursor: pointer; }
+  ul { list-style: none; margin: 0; padding: 0; background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  li { display: grid; grid-template-columns: 22px 1fr auto auto; gap: 12px; align-items: center; padding: 12px 14px; border-top: 1px solid var(--line); transition: background .3s; }
+  li:first-child { border-top: none; }
+  li input[type=checkbox] { width: 18px; height: 18px; margin: 0; accent-color: var(--accent); }
+  .meta { font-size: 12px; color: var(--muted); white-space: nowrap; }
+  li.done .title { text-decoration: line-through; color: var(--muted); }
+  li.late .meta { color: var(--late); font-weight: 600; letter-spacing: .02em; }
+  .del { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 16px; padding: 0 4px; }
+  .empty { padding: 28px; text-align: center; color: var(--muted); }
+  footer { margin-top: 16px; font-size: 12px; color: var(--muted); display: flex; justify-content: space-between; }
+  footer button { background: none; border: none; color: var(--muted); font: inherit; cursor: pointer; padding: 0; }
+  /* the longer a task waits, the more the row leans on you */
+  li.late.d1 { background: #fff6f4; }
+  li.late.d2 { background: #fde9e5; }
+  li.late.d3 { background: #2a1714; color: #f4dcd6; }
+  li.late.d3 .meta { color: #ff8a73; }
+  li.late.d3 .title { font-weight: 600; }
+</style>
+</head>
+<body>
+<main>
+  <header><h1>Overdue</h1><span class="count" id="count"></span></header>
+  <div class="tabs" id="tabs">
+    <button data-f="all" class="on">All</button><button data-f="open">Open</button><button data-f="late">Overdue</button>
+  </div>
+  <form id="add">
+    <input name="title" placeholder="Add a task" required>
+    <input name="due" type="date" required>
+    <button>Add</button>
+  </form>
+  <ul id="list"></ul>
+  <footer><span>Stored in your browser.</span><button id="reset">Reset demo data</button></footer>
+</main>
+<script>
+const KEY = "overdue.v1";
+const TODAY = new Date(new Date().toISOString().slice(0, 10) + "T12:00");
+const ago = n => new Date(TODAY - n * 864e5).toISOString().slice(0, 10);
+
+const DEMO = [
+  ["Finish landing page", ago(-2), false],
+  ["Fix auth bug", ago(1), false],
+  ["Write tests", ago(9), false],
+  ["Reply to Sam about the API", ago(0), false],
+  ["Pay invoice", ago(41), false],
+  ["Ship v0.2", ago(4), true],
+].map(([title, due, done], i) => ({ id: i + 1, title, due, done }));
+
+let tasks;
+const demoCopy = () => DEMO.map(t => ({ ...t }));
+try { tasks = JSON.parse(localStorage.getItem(KEY)) || demoCopy(); } catch { tasks = demoCopy(); }
+const save = () => { try { localStorage.setItem(KEY, JSON.stringify(tasks)); } catch {} };
+let filter = "all";
+
+const lateBy = t => Math.floor((TODAY - new Date(t.due + "T12:00")) / 864e5);
+const tier = d => d >= 30 ? "d3" : d >= 7 ? "d2" : "d1";
+
+function meta(t) {
+  if (t.done) return "done";
+  const d = lateBy(t);
+  if (d > 0) return `OVERDUE · ${d} day${d > 1 ? "s" : ""}`;
+  if (d === 0) return "due today";
+  return `due in ${-d} day${d < -1 ? "s" : ""}`;
+}
+
+function render() {
+  const open = tasks.filter(t => !t.done);
+  const late = open.filter(t => lateBy(t) > 0);
+  document.getElementById("count").textContent = `${open.length} open · ${late.length} overdue`;
+  const shown = (filter === "open" ? open : filter === "late" ? late : tasks)
+    .slice().sort((a, b) => a.done - b.done || a.due.localeCompare(b.due));
+  const list = document.getElementById("list");
+  if (!shown.length) { list.innerHTML = `<li class="empty">Nothing here. For now.</li>`; return; }
+  list.innerHTML = shown.map(t => {
+    const d = lateBy(t);
+    const cls = t.done ? "done" : d > 0 ? `late ${tier(d)}` : "";
+    return `<li class="${cls}">
+      <input type="checkbox" data-id="${t.id}" ${t.done ? "checked" : ""} aria-label="Done">
+      <span class="title">${esc(t.title)}</span>
+      <span class="meta">${meta(t)}</span>
+      <button class="del" data-del="${t.id}" aria-label="Delete">×</button>
+    </li>`;
+  }).join("");
+}
+
+function esc(s) { return s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+
+const form = document.getElementById("add");
+form.due.value = ago(-1);
+form.addEventListener("submit", e => {
+  e.preventDefault();
+  tasks.push({ id: Date.now(), title: form.title.value.trim(), due: form.due.value, done: false });
+  save(); render();
+  form.title.value = "";
+});
+document.getElementById("list").addEventListener("click", e => {
+  const { id, del } = e.target.dataset;
+  if (id) tasks = tasks.map(t => t.id === +id ? { ...t, done: e.target.checked } : t);
+  else if (del) tasks = tasks.filter(t => t.id !== +del);
+  else return;
+  save(); render();
+});
+document.getElementById("tabs").addEventListener("click", e => {
+  if (!e.target.dataset.f) return;
+  filter = e.target.dataset.f;
+  [...e.currentTarget.children].forEach(b => b.classList.toggle("on", b === e.target));
+  render();
+});
+document.getElementById("reset").onclick = () => { tasks = demoCopy(); save(); render(); };
+
+render();
+</script>
+</body>
+</html>
